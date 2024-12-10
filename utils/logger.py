@@ -4,10 +4,16 @@ from datetime import datetime
 
 class Logger:
     def __init__(self):
+        # logger 속성을 먼저 초기화
+        self.logger = None
         self.setup_logger()
         
     def setup_logger(self):
         """로거 설정"""
+        # logger 객체 초기화 추가
+        self.logger = logging.getLogger('trading_logger')
+        self.logger.setLevel(logging.DEBUG)
+        
         # PythonAnywhere 경로 설정
         username = os.getenv('USER', 'default')  # PythonAnywhere 사용자명
         log_dir = f'/home/{username}/logs'

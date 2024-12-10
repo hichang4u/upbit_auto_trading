@@ -8,7 +8,7 @@ class Config:
     UPBIT_SECRET_KEY = os.getenv('UPBIT_SECRET_KEY')
     
     # 거래 설정
-    SIMULATION_MODE = True    # 시뮬레이션 모드 여부
+    SIMULATION_MODE = False    # 시뮬레이션 모드 여부
     COIN_TICKER = 'XRP'      # 거래할 코인(XRP, BTC, ETH, SOL, DOGE, ADA)
     CURRENCY = 'KRW'         # 거래 통화
     MARKET = f'{CURRENCY}-{COIN_TICKER}'
@@ -39,13 +39,13 @@ class Config:
     
     # 분석 설정
     ENABLE_ANALYSIS = True           # 자동 분석 활성화
-    ANALYSIS_TIME = "23:00"          # 일일 분석 시간
+    ANALYSIS_TIME = "23:50"          # 일일 분석 시간
     ANALYSIS_DAYS = 30               # 분석 기간 (일)
     AUTO_ADJUST_PARAMS = True        # 파라미터 자동 조정
     
-    # 거래 시간 설정
-    TRADING_START_HOUR = 9           # 거래 시작 시간
-    TRADING_END_HOUR = 23            # 거래 종료 시간
+    # 거래 시간 설정(코인은 24시간 거래 가능)
+    #TRADING_START_HOUR = 9           # 거래 시작 시간
+    #TRADING_END_HOUR = 23            # 거래 종료 시간
     
     # 거래 간격 설정
     MIN_TRADE_INTERVAL = 5   # 최소 허용 간격

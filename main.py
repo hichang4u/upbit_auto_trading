@@ -94,13 +94,8 @@ def main():
         if Config.ENABLE_ANALYSIS:
             run_analysis()
         
-        # 자동매매 시작
-        while True:
-            if is_trading_time():
-                trader.start()
-            else:
-                log.log('TR', "거래 가능 시간이 아닙니다. 대기중...")
-                time.sleep(300)  # 5분 대기
+        # 자동매매 시작 (24시간 연속 거래)
+        trader.start()
         
     except Exception as e:
         log.log('WA', f"프로그램 실행 중 오류 발생: {str(e)}")
