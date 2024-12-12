@@ -4,6 +4,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
+    # Telegram 설정
+    TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', 'your_bot_token')
+    TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', 'your_chat_id')
+    
+    # API 키 설정
     UPBIT_ACCESS_KEY = os.getenv('UPBIT_ACCESS_KEY')
     UPBIT_SECRET_KEY = os.getenv('UPBIT_SECRET_KEY')
     
@@ -55,3 +60,5 @@ class Config:
     # API 설정
     MAX_API_CALLS = 600      # 분당 최대 API 호출 수
     MIN_API_INTERVAL = 0.1   # API 호출 간 최소 간격 (초)
+    
+   

@@ -6,33 +6,6 @@ class XRPStrategy(BaseStrategy):
     def __init__(self):
         super().__init__()
         self.config = XRPConfig
-        self.position = False
-        self.entry_price = None
-        self.client = None  # client는 trader에서 주입
-    
-    def set_client(self, client):
-        """API 클라이언트 설정"""
-        self.client = client
-    
-    def get_ohlcv(self, market):
-        """OHLCV 데이터 조회"""
-        try:
-            if self.client is None:
-                raise Exception("API client not initialized")
-            return self.client.get_ohlcv(market)
-        except Exception as e:
-            log.log('WA', f"OHLCV 데이터 조회 중 오류: {str(e)}")
-            return None
-    
-    def get_current_price(self, market):
-        """현재가 조회"""
-        try:
-            if self.client is None:
-                raise Exception("API client not initialized")
-            return self.client.get_current_price(market)
-        except Exception as e:
-            log.log('WA', f"현재가 조회 중 오류: {str(e)}")
-            return None
     
     def calculate_indicators(self, market):
         """XRP 특화 지표"""
@@ -87,20 +60,16 @@ class XRPStrategy(BaseStrategy):
                 if (volatility_signal and 
                     bb_position < 0.3 and 
                     (volume_surge or self.check_ma_trend(indicators))):
-                    self.position = True
-                    self.entry_price = current_price
+                    self.enter_position(current_price)
                     return 'BUY'
             
             # 매도 신호
             else:
-                profit_rate = ((current_price - self.entry_price) / self.entry_price)
+                profit_rate = self.check_position(current_price)
                 
                 # 익절/손절
-                if profit_rate >= self.config.PROFIT_RATE:
-                    self.position = False
-                    return 'SELL'
-                if profit_rate <= -self.config.LOSS_RATE:
-                    self.position = False
+                if profit_rate >= self.config.PROFIT_RATE or profit_rate <= -self.config.LOSS_RATE:
+                    self.exit_position()
                     return 'SELL'
                 
                 # 추가 매도 조건
@@ -109,7 +78,7 @@ class XRPStrategy(BaseStrategy):
                 
                 if (bb_position > 0.8 or 
                     (indicators['VOL_RATIO'] < self.config.MIN_VOLUME_RATIO and profit_rate > 0.003)):
-                    self.position = False
+                    self.exit_position()
                     return 'SELL'
             
             return 'HOLD'
@@ -123,5 +92,6 @@ class XRPStrategy(BaseStrategy):
         try:
             ma_values = [indicators[f'MA{period}'] for period in sorted(self.config.MA_PERIODS)]
             return all(ma_values[i] >= ma_values[i+1] for i in range(len(ma_values)-1))
-        except:
+        except Exception as e:
+            log.log('WA', f"이동평균선 정배열 확인 중 오류: {str(e)}")
             return False

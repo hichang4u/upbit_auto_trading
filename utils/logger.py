@@ -1,71 +1,80 @@
 import os
-import logging
 from datetime import datetime
 
 class Logger:
     def __init__(self):
-        # logger 속성을 먼저 초기화
-        self.logger = None
-        self.setup_logger()
+        self.base_log_dir = 'logs'
+        self.current_date = None
+        self.log_file = None
+        self.current_log_dir = None
+        self.ensure_log_directory()
+        self.update_log_file()
         
-    def setup_logger(self):
-        """로거 설정"""
-        # logger 객체 초기화 추가
-        self.logger = logging.getLogger('trading_logger')
-        self.logger.setLevel(logging.DEBUG)
+    def ensure_log_directory(self):
+        """로그 디렉토리 생성"""
+        if not os.path.exists(self.base_log_dir):
+            os.makedirs(self.base_log_dir)
+            
+    def get_log_directory(self):
+        """현재 날짜 기반으로 로그 디렉토리 경로 생성"""
+        now = datetime.now()
+        year = now.strftime('%Y')
+        month = now.strftime('%m')
         
-        # PythonAnywhere 경로 설정
-        username = os.getenv('USER', 'default')  # PythonAnywhere 사용자명
-        log_dir = f'/home/{username}/logs'
-        os.makedirs(log_dir, exist_ok=True)
+        # logs/2024/01 형식의 경로 생성
+        log_dir = os.path.join(self.base_log_dir, year, month)
         
-        # 로그 파일명 설정
+        # 디렉토리가 없으면 생성
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+            
+        return log_dir
+            
+    def update_log_file(self):
+        """현재 날짜의 로그 파일 경로 업데이트"""
         today = datetime.now().strftime('%Y%m%d')
-        log_file = f'{log_dir}/trading_{today}.log'
         
-        # 기존 핸들러 제거
-        if self.logger.handlers:
-            for handler in self.logger.handlers:
-                self.logger.removeHandler(handler)
-        
-        # 파일 핸들러 (권한 설정 추가)
-        file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='a')
-        file_handler.setLevel(logging.DEBUG)
-        
-        # 콘솔 핸들러
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        
-        # 포맷 설정
-        formatter = logging.Formatter('%(levelname)s|%(asctime)s|%(message)s',
-                                    '%Y-%m-%d %H:%M:%S')
-        file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
-        
-        # 핸들러 추가
-        self.logger.addHandler(file_handler)
-        self.logger.addHandler(console_handler)
+        # 날짜가 변경되었는지 확인
+        if today != self.current_date:
+            self.current_date = today
+            self.current_log_dir = self.get_log_directory()
+            self.log_file = os.path.join(self.current_log_dir, f'trading_{today}.log')
+            
+            # 새로운 날짜의 로그 파일 시작을 표시
+            if not os.path.exists(self.log_file):
+                with open(self.log_file, 'a', encoding='utf-8') as f:
+                    f.write(f"=== {today} 거래 로그 시작 ===\n")
     
     def log(self, level, message):
-        """로그 메시지 기록"""
-        if level == 'TR':  # TRADE
-            self.logger.info(message)
-        elif level == 'WA':  # WARNING
-            self.logger.warning(message)
-        elif level == 'ER':  # ERROR
-            self.logger.error(message)
-        else:
-            self.logger.debug(message)
+        """로그 기록"""
+        try:
+            # 날짜가 변경되었는지 확인하고 파일 업데이트
+            self.update_log_file()
+            
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            log_message = f"{level:<5} | {timestamp} | {message}\n"
+            
+            # 콘솔 출력
+            print(log_message.strip())
+            
+            # 파일에 기록
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                f.write(log_message)
+                
+        except Exception as e:
+            print(f"로그 기록 중 오류 발생: {str(e)}")
     
     def print_header(self, message):
-        """섹션 헤더 출력"""
-        line = "=" * 50
-        self.log('TR', f"\n{line}\n{message}\n{line}")
+        """구분선과 함께 헤더 출력"""
+        self.log('INFO', '=' * 50)
+        self.log('INFO', f"{message:^50}")
+        self.log('INFO', '=' * 50)
     
     def print_section(self, message):
-        """서브섹션 헤더 출력"""
-        line = "-" * 40
-        self.log('TR', f"\n{line}\n{message}\n{line}")
+        """섹션 구분선과 함�� 메시지 출력"""
+        self.log('INFO', '-' * 50)
+        self.log('INFO', f"{message:^50}")
+        self.log('INFO', '-' * 50)
 
 # 전역 로거 인스턴스 생성
 log = Logger()

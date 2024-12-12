@@ -21,8 +21,8 @@ class MultiCoinTrader:
             from config.coins.xrp_config import XRPConfig
             
             strategy = XRPStrategy()
-            client = UpbitClient()  # API 클�이언트 생성
-            strategy.set_client(client)  # 전�에 클라이언트 주입
+            client = UpbitClient()  # API 클라이언트 생성
+            strategy.set_client(client)  # 전에 클라이언트 주입
             
             self.traders['XRP'] = {
                 'strategy': strategy,
@@ -69,13 +69,22 @@ class MultiCoinTrader:
             if Config.SIMULATION_MODE:
                 avg_price = trader['simulation_entry_price']
             else:
-                avg_price = avg_buy_price or trader['client'].get_avg_buy_price(trader['config'].COIN_TICKER)
+                # avg_buy_price가 직접 전달되지 않은 경우에만 API 호출
+                if avg_buy_price is None:
+                    avg_price = trader['client'].get_avg_buy_price(trader['config'].COIN_TICKER)
+                else:
+                    avg_price = avg_buy_price
+                
+            # 숫자형으로 변환 (API가 문자열을 반환할 수 있음)
+            if avg_price is not None:
+                avg_price = float(avg_price)
                 
             if avg_price and coin_balance > 0:
                 profit_rate = ((current_price - avg_price) / avg_price) * 100
                 profit_amount = coin_balance * avg_price * (profit_rate / 100)
                 return profit_amount, profit_rate, avg_price
             return 0, 0, 0
+            
         except Exception as e:
             log.log('WA', f"{coin_ticker} 수익률 계산 중 오류: {str(e)}")
             return 0, 0, 0
@@ -86,13 +95,19 @@ class MultiCoinTrader:
             trader = self.traders[coin_ticker]
             current_price = trader['client'].get_current_price(trader['config'].MARKET)
             
+            # 현재가가 None이면 종료
+            if current_price is None:
+                log.log('WA', f"{coin_ticker} 현재가 조회 실패")
+                return None, None, None
+                
             if Config.SIMULATION_MODE:
                 balance = trader['simulation_balance']
+                cash_balance = balance['KRW']
+                coin_balance = balance[trader['config'].COIN_TICKER]
             else:
-                balance = trader['client'].get_balance()
-            
-            cash_balance = balance.get('KRW', 0)
-            coin_balance = balance.get(trader['config'].COIN_TICKER, 0)
+                # 현금 잔고와 코인 잔고를 개별적으로 조회
+                cash_balance = trader['client'].get_balance('KRW') or 0
+                coin_balance = trader['client'].get_balance(trader['config'].COIN_TICKER) or 0
             
             profit_amount, profit_rate, avg_buy_price = self.get_profit_info(
                 coin_ticker, current_price, coin_balance
@@ -110,7 +125,7 @@ class MultiCoinTrader:
                 log.log('TR', f"평가손익: {int(profit_amount):,}원 ({profit_rate:+.2f}%)")
             
             return current_price, cash_balance, coin_balance
-            
+                
         except Exception as e:
             log.log('WA', f"{coin_ticker} 정보 출력 중 오류: {str(e)}")
             return None, None, None
@@ -242,3 +257,34 @@ class MultiCoinTrader:
         
         mode = "시뮬레이션" if Config.SIMULATION_MODE else "실제 거래"
         log.log('TR', f"{mode} 모드 프로그램이 안전하게 종료되었습니다")
+    
+    def print_info(self, data):
+        """거래 정보 출력"""
+        try:
+            # 현재가가 단순 정수인 경우
+            if isinstance(data, (int, float)):
+                log.log('TR', f"현재가: {data:,.0f} 원")
+                return
+
+            # 리스트인 경우
+            if isinstance(data, list):
+                if len(data) > 0:
+                    info = data[0]
+                else:
+                    log.log('TR', "거래 정보가 없습니다")
+                    return
+            # 딕셔너리인 경우
+            elif isinstance(data, dict):
+                info = data
+            else:
+                log.log('WA', f"예상치 못한 데이터 형식: {type(data)}")
+                return
+
+            # 딕셔너리에서 정보 추출
+            price = info.get('trade_price', 0)
+            volume = info.get('trade_volume', 0)
+            log.log('TR', f"현재가: {price:,.0f} 원")
+            log.log('TR', f"거래량: {volume:,.4f}")
+            
+        except Exception as e:
+            log.log('WA', f"거래 정보 출력 중 오류: {str(e)}")

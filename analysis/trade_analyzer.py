@@ -6,17 +6,36 @@ import seaborn as sns
 from pathlib import Path
 import json
 import sys
+import shutil
 sys.path.append('.')
 from config.config import Config
 import os
 from utils.logger import log
 import re
+from utils.telegram_notifier import send_telegram_alert
 
 class TradeAnalyzer:
     def __init__(self):
         self.results_dir = 'analysis/results'
-        os.makedirs(self.results_dir, exist_ok=True)
+        self.backup_dir = 'analysis/backups'
+        self.history_file = 'analysis/parameter_history.json'
+        self.max_adjustment_rates = {
+            'PROFIT_RATE': 0.2,      # 최대 20% 조정
+            'LOSS_RATE': 0.2,
+            'VOLATILITY_FACTOR': 0.3,
+            'VOLUME_SURGE_THRESHOLD': 0.3,
+            'BB_WIDTH': 0.2,
+            'MIN_VOLUME_RATIO': 0.2
+        }
         
+        # 필요한 디렉토리 생성
+        for directory in [self.results_dir, self.backup_dir]:
+            os.makedirs(directory, exist_ok=True)
+            
+        # 파라미터 변경 이력 초기화
+        if not os.path.exists(self.history_file):
+            self.save_parameter_history({})
+
     def create_report(self, days=30):
         """코인별 거래 분석 리포트 생성"""
         try:
@@ -28,16 +47,189 @@ class TradeAnalyzer:
                         'statistics': coin_stats,
                         'suggestions': self.suggest_parameters(coin_ticker, coin_stats)
                     }
-                    
-                    # 코인별 결과 저장
                     self.save_analysis_results(coin_ticker, reports[coin_ticker])
-                    
             return reports
-            
         except Exception as e:
             log.log('WA', f"분석 리포트 생성 중 오류: {str(e)}")
             return None
-    
+
+    def suggest_parameters(self, coin_ticker, stats):
+        """코인별 파라미터 제안 (안전 제한 적용)"""
+        try:
+            if coin_ticker == 'XRP':
+                from config.coins.xrp_config import XRPConfig as CoinConfig
+            
+            current_params = self.get_current_parameters(coin_ticker)
+            suggestions = {}
+            
+            # 수익률 기반 제안 (안전 제한 적용)
+            suggestions['PROFIT_RATE'] = self.limit_adjustment(
+                current_params['PROFIT_RATE'],
+                min(stats['avg_profit'] * 0.8, 0.05),
+                'PROFIT_RATE'
+            )
+            
+            suggestions['LOSS_RATE'] = self.limit_adjustment(
+                current_params['LOSS_RATE'],
+                min(abs(stats['max_loss']) * 1.2, 0.05),
+                'LOSS_RATE'
+            )
+            
+            # 기타 파라미터 제안...
+            suggestions['VOLATILITY_FACTOR'] = self.limit_adjustment(
+                current_params['VOLATILITY_FACTOR'],
+                self.calculate_volatility_factor(stats),
+                'VOLATILITY_FACTOR'
+            )
+            
+            return suggestions
+        except Exception as e:
+            log.log('WA', f"{coin_ticker} 파라미터 제안 중 오류: {str(e)}")
+            return None
+
+    def limit_adjustment(self, current_value, suggested_value, param_name):
+        """파라미터 조정 제한"""
+        max_rate = self.max_adjustment_rates.get(param_name, 0.2)
+        min_change = current_value * (1 - max_rate)
+        max_change = current_value * (1 + max_rate)
+        return max(min_change, min(max_change, suggested_value))
+
+    def update_coin_config(self, coin_ticker, suggestions):
+        """분석 결과를 바탕으로 코인 설정 업데이트 (안전장치 포함)"""
+        try:
+            config_path = f'config/coins/{coin_ticker.lower()}_config.py'
+            if not os.path.exists(config_path):
+                log.log('WA', f"{config_path} 파일이 존재하지 않습니다.")
+                return False
+            
+            # 설정 파일 백업
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_path = f"{self.backup_dir}/{coin_ticker.lower()}_config_{timestamp}.py"
+            shutil.copy2(config_path, backup_path)
+            
+            # 현재 설정 읽기
+            with open(config_path, 'r', encoding='utf-8') as f:
+                current_config = f.read()
+            
+            # 파라미터 변경 이력 로드
+            history = self.load_parameter_history()
+            if coin_ticker not in history:
+                history[coin_ticker] = []
+            
+            # 새로운 설정으로 업데이트
+            updated_config = current_config
+            changes = {}
+            
+            for param, value in suggestions.items():
+                pattern = f"{param}\s*=\s*[0-9.]+\n"
+                replacement = f"{param} = {value}\n"
+                if re.search(pattern, updated_config):
+                    updated_config = re.sub(pattern, replacement, updated_config)
+                    changes[param] = {'old': float(re.search(pattern, current_config).group().split('=')[1].strip()),
+                                    'new': value}
+            
+            # 변경 사항이 있는 경우에만 저장
+            if changes:
+                # 임시 파일에 먼저 저장
+                temp_path = f"{config_path}.temp"
+                with open(temp_path, 'w', encoding='utf-8') as f:
+                    f.write(updated_config)
+                
+                # 변경 이력 기록
+                history[coin_ticker].append({
+                    'timestamp': timestamp,
+                    'changes': changes,
+                    'backup_path': backup_path
+                })
+                self.save_parameter_history(history)
+                
+                # 실제 파일 업데이트
+                os.replace(temp_path, config_path)
+                
+                log.log('TR', f"{coin_ticker} 설정이 업데이트되었습니다. 변경사항: {changes}")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            log.log('WA', f"{coin_ticker} 설정 업데이트 중 오류: {str(e)}")
+            self.rollback_config(coin_ticker)
+            return False
+
+    def rollback_config(self, coin_ticker):
+        """설정 롤백"""
+        try:
+            history = self.load_parameter_history()
+            if coin_ticker in history and history[coin_ticker]:
+                last_change = history[coin_ticker][-1]
+                backup_path = last_change['backup_path']
+                config_path = f'config/coins/{coin_ticker.lower()}_config.py'
+                
+                if os.path.exists(backup_path):
+                    shutil.copy2(backup_path, config_path)
+                    log.log('TR', f"{coin_ticker} 설정이 이전 버전으로 롤백되었습니다.")
+                    return True
+            return False
+        except Exception as e:
+            log.log('WA', f"{coin_ticker} 설정 롤백 중 오류: {str(e)}")
+            return False
+
+    def load_parameter_history(self):
+        """파라미터 변경 이력 로드"""
+        try:
+            with open(self.history_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def save_parameter_history(self, history):
+        """파라미터 변경 이력 저장"""
+        try:
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump(history, f, indent=2)
+        except Exception as e:
+            log.log('WA', f"파라미터 변경 이력 저장 중 오류: {str(e)}")
+
+    def get_current_parameters(self, coin_ticker):
+        """현재 파라미터 값 조회"""
+        try:
+            config_path = f'config/coins/{coin_ticker.lower()}_config.py'
+            with open(config_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            params = {}
+            for param in self.max_adjustment_rates.keys():
+                match = re.search(f"{param}\s*=\s*([0-9.]+)", content)
+                if match:
+                    params[param] = float(match.group(1))
+            return params
+        except Exception as e:
+            log.log('WA', f"{coin_ticker} 현재 파라미터 조회 중 오류: {str(e)}")
+            return {}
+
+    def apply_analysis_results(self):
+        """분석 결과를 설정에 적용 (안전장치 포함)"""
+        try:
+            if not Config.AUTO_ADJUST_PARAMS:
+                log.log('TR', "자동 파라미터 조정이 비활성화되어 있습니다.")
+                return False
+            
+            reports = self.create_report()
+            if not reports:
+                return False
+            
+            success = True
+            for coin_ticker, report in reports.items():
+                if 'suggestions' in report:
+                    if not self.update_coin_config(coin_ticker, report['suggestions']):
+                        success = False
+                        
+            return success
+            
+        except Exception as e:
+            log.log('WA', f"분석 결과 적용 중 오류: {str(e)}")
+            return False
+
     def analyze_coin(self, coin_ticker, days):
         """개별 코인 분석"""
         try:
@@ -62,35 +254,6 @@ class TradeAnalyzer:
             
         except Exception as e:
             log.log('WA', f"{coin_ticker} 분석 중 오류: {str(e)}")
-            return None
-    
-    def suggest_parameters(self, coin_ticker, stats):
-        """코인별 파라미터 제안"""
-        try:
-            if coin_ticker == 'XRP':
-                from config.coins.xrp_config import XRPConfig as CoinConfig
-            # elif coin_ticker == 'BTC':
-            #     from config.coins.btc_config import BTCConfig as CoinConfig
-            
-            suggestions = {}
-            
-            # 수익률 기반 제안
-            suggestions['PROFIT_RATE'] = min(stats['avg_profit'] * 0.8, 0.05)
-            suggestions['LOSS_RATE'] = min(abs(stats['max_loss']) * 1.2, 0.05)
-            
-            # 변동성 기반 제안
-            suggestions['VOLATILITY_FACTOR'] = self.calculate_volatility_factor(stats)
-            
-            # 거래량 기반 제안
-            suggestions['VOLUME_SURGE_THRESHOLD'] = self.calculate_volume_threshold(stats)
-            
-            # 볼린저 밴드 기반 제안
-            suggestions['BB_WIDTH'] = self.calculate_bb_width(stats)
-            
-            return suggestions
-            
-        except Exception as e:
-            log.log('WA', f"{coin_ticker} 파라미터 제안 중 오류: {str(e)}")
             return None
     
     def save_analysis_results(self, coin_ticker, results):
@@ -173,11 +336,11 @@ class TradeAnalyzer:
                 if '매수' in message:
                     trade_info['type'] = 'BUY'
                     # 가격 추출
-                    price_match = re.search(r'매수�가: ([\d,]+)원', message)
+                    price_match = re.search(r'매수가: ([\d,]+)원', message)
                     if price_match:
                         trade_info['price'] = float(price_match.group(1).replace(',', ''))
                     # 수량 추출
-                    amount_match = re.search(r'매수�량: ([\d.]+)', message)
+                    amount_match = re.search(r'매수량: ([\d.]+)', message)
                     if amount_match:
                         trade_info['amount'] = float(amount_match.group(1))
                     
@@ -185,15 +348,15 @@ class TradeAnalyzer:
                 elif '매도' in message:
                     trade_info['type'] = 'SELL'
                     # 가격 추출
-                    price_match = re.search(r'매도�가: ([\d,]+)원', message)
+                    price_match = re.search(r'매도가: ([\d,]+)원', message)
                     if price_match:
                         trade_info['price'] = float(price_match.group(1).replace(',', ''))
                     # 수량 추출
-                    amount_match = re.search(r'매도�량: ([\d.]+)', message)
+                    amount_match = re.search(r'매도량: ([\d.]+)', message)
                     if amount_match:
                         trade_info['amount'] = float(amount_match.group(1))
                     # 수익률 추출
-                    profit_match = re.search(r'거�수익: ([+-]?\d+\.?\d*)%', message)
+                    profit_match = re.search(r'거수익: ([+-]?\d+\.?\d*)%', message)
                     if profit_match:
                         trade_info['profit'] = float(profit_match.group(1))
                 
@@ -203,7 +366,7 @@ class TradeAnalyzer:
             return None
             
         except Exception as e:
-            log.log('WA', f"로그 �싱 중 오류: {str(e)}")
+            log.log('WA', f"로그 파싱 중 오류: {str(e)}")
             return None
 
     def calculate_avg_holding_time(self, df):
@@ -265,24 +428,66 @@ class TradeAnalyzer:
             log.log('WA', f"거래량과 수익률 상관관계 분석 중 오류: {str(e)}")
             return 0
 
+    def notify_trade_execution(self, trade_info):
+        """체결 시 Telegram 알림 전송"""
+        # 매수/매도 구분
+        if 'type' in trade_info:
+            if trade_info['type'] == 'BUY':
+                emoji = "💵"  # 매수는 현금 이모지
+                action = "매수"
+            else:  # SELL
+                emoji = "💰"  # 매도는 돈주머니 이모지
+                action = "매도"
+        else:
+            emoji = "💱"  # 기본 거래 이모지
+            action = "체결"
+
+        # 수익률 표시 (매도의 경우)
+        profit_text = ""
+        if 'profit' in trade_info and trade_info['profit'] is not None:
+            profit = trade_info['profit']
+            if profit > 0:
+                profit_text = f"\n수익률: ✨ +{profit:.2f}%"
+            else:
+                profit_text = f"\n수익률: 📉 {profit:.2f}%"
+
+        # 메시지 구성
+        message = (
+            f"{emoji} {trade_info['market']} {action}\n"
+            f"가격: {trade_info['price']:,.0f}원\n"
+            f"수량: {trade_info['amount']:.4f}"
+            f"{profit_text}"
+        )
+        
+        send_telegram_alert(message, Config.TELEGRAM_BOT_TOKEN, Config.TELEGRAM_CHAT_ID)
+
+    def execute_trade(self, trade_info):
+        """거래 실행 로직"""
+        self.notify_trade_execution(trade_info)
+
 def main():
     analyzer = TradeAnalyzer()
-    report = analyzer.create_report()
     
-    if report:
-        print("\n=== 거래 분석 리포트 ===")
-        print(f"분석 기간: {report['period']}")
-        print("\n[거래 통계]")
-        stats = report['statistics']
-        print(f"총 거래 횟수: {stats['total_trades']}")
-        print(f"승률: {stats['win_rate']:.2f}%")
-        print(f"평균 수익률: {stats['avg_profit']:.2f}%")
-        print(f"최대 수익률: {stats['max_profit']:.2f}%")
-        print(f"최대 손실률: {stats['max_loss']:.2f}%")
-        
-        print("\n[파라미터 제안]")
-        for param, value in report['suggestions'].items():
-            print(f"{param}: {value:.4f}")
+    if Config.AUTO_ADJUST_PARAMS:
+        success = analyzer.apply_analysis_results()
+        if success:
+            log.log('TR', "파라미터 자동 조정이 완료되었습니다.")
+        else:
+            log.log('WA', "파라미터 자동 조정 중 문제가 발생했습니다.")
+    else:
+        report = analyzer.create_report()
+        if report:
+            print("\n=== 거래 분석 리포트 ===")
+            for coin_ticker, coin_report in report.items():
+                print(f"\n[{coin_ticker} 분석 결과]")
+                stats = coin_report['statistics']
+                print(f"총 거래 횟수: {stats['total_trades']}")
+                print(f"승률: {stats['win_rate']:.2f}%")
+                print(f"평균 수익률: {stats['avg_profit']:.2f}%")
+                
+                print("\n[파라미터 제안]")
+                for param, value in coin_report['suggestions'].items():
+                    print(f"{param}: {value:.4f}")
 
 if __name__ == "__main__":
     main() 
