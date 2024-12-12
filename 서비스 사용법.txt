@@ -1,0 +1,25 @@
+#관리자 권한으로 실행
+
+# 서비스 설치
+install_service.bat
+
+# 서비스 시작
+명령 프롬프트(CMD)를 관리자 권한으로 실행:
+Windows 검색에서 "cmd" 입력
+마우스 우클릭 -> "관리자 권한으로 실행"
+그 다음 명령어 실행:
+net start UpbitAutoTrader
+# 또는
+start_service.bat
+# 또는 서비스 관리자를 통해 시작:
+Windows + R 키를 누르고 services.msc 입력
+"Upbit Auto Trader" 서비스 찾기
+마우스 우클릭 -> "시작" 선택
+
+# 서비스 중지
+net stop UpbitAutoTrader
+# 또는
+stop_service.bat
+
+# 서비스 제거
+remove_service.bat

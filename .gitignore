@@ -1,3 +1,12 @@
+# 실행 파일
+*.exe
+*.msi
+*.dll
+*.bat
+*.cmd
+*.com
+*.sh
+
 # 로그 파일 및 디렉토리
 logs/
 *.log
@@ -36,3 +45,9 @@ ENV/
 *.swp
 *.swo
 .DS_Store
+
+# Windows 관련
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

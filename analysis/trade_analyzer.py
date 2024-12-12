@@ -48,6 +48,20 @@ class TradeAnalyzer:
                         'suggestions': self.suggest_parameters(coin_ticker, coin_stats)
                     }
                     self.save_analysis_results(coin_ticker, reports[coin_ticker])
+                    
+                    # 텔레그램 알림 추가
+                    stats = reports[coin_ticker]['statistics']
+                    analysis_msg = (
+                        f"📊 {coin_ticker} 일일 거래 분석 결과\n"
+                        f"총 거래 횟수: {stats['total_trades']}\n"
+                        f"승률: {stats['win_rate']:.2f}%\n"
+                        f"평균 수익률: {stats['avg_profit']:.2f}%\n"
+                        f"최대 수익: {stats['max_profit']:.2f}%\n"
+                        f"최대 손실: {stats['max_loss']:.2f}%\n"
+                        f"평균 보유 시간: {stats['avg_holding_time']:.1f}시간"
+                    )
+                    send_telegram_alert(analysis_msg, Config.TELEGRAM_BOT_TOKEN, Config.TELEGRAM_CHAT_ID)
+                    
             return reports
         except Exception as e:
             log.log('WA', f"분석 리포트 생성 중 오류: {str(e)}")
@@ -221,9 +235,18 @@ class TradeAnalyzer:
             success = True
             for coin_ticker, report in reports.items():
                 if 'suggestions' in report:
-                    if not self.update_coin_config(coin_ticker, report['suggestions']):
+                    if self.update_coin_config(coin_ticker, report['suggestions']):
+                        # 파라미터 조정 알림 추가
+                        adjust_msg = (
+                            f"🔄 {coin_ticker} 파라미터 자동 조정\n"
+                            "변경된 파라미터:\n"
+                        )
+                        for param, value in report['suggestions'].items():
+                            adjust_msg += f"{param}: {value:.4f}\n"
+                        send_telegram_alert(adjust_msg, Config.TELEGRAM_BOT_TOKEN, Config.TELEGRAM_CHAT_ID)
+                    else:
                         success = False
-                        
+                    
             return success
             
         except Exception as e:
