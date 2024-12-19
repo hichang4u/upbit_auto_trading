@@ -44,7 +44,7 @@ class Config:
     
     # 분석 설정
     ENABLE_ANALYSIS = True           # 자동 분석 활성화
-    ANALYSIS_TIME = "23:50"          # 일일 분석 시간
+    ANALYSIS_TIME = "09:10"          # 일일 분석 시간
     ANALYSIS_DAYS = 30               # 분석 기간 (일)
     AUTO_ADJUST_PARAMS = True        # 파라미터 자동 조정
     

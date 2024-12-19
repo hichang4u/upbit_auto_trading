@@ -1,6 +1,7 @@
 from src.strategies.base_strategy import BaseStrategy
 from config.coins.xrp_config import XRPConfig
 from utils.logger import log
+from datetime import datetime
 
 class XRPStrategy(BaseStrategy):
     def __init__(self):
@@ -49,6 +50,15 @@ class XRPStrategy(BaseStrategy):
             if indicators is None:
                 return 'HOLD'
             
+            # 현재 시간과 거래 간격 로깅
+            log.system_log('INFO', "--------------------------------------------------")
+            log.system_log('INFO', f"                 [실제 거래] XRP 현재 상태")
+            log.system_log('INFO', "--------------------------------------------------")
+            log.system_log('TR', f"시간: {datetime.now()} (거래간격: {Config.TRADE_INTERVAL}초)")
+            log.system_log('TR', f"현재가: {current_price:,.0f}원")
+            log.system_log('TR', f"보유현금: {self.get_balance():,.8f}원")
+            log.system_log('TR', f"보유코인: {self.get_coin_balance():.4f} XRP")
+            
             # 매수 신호
             if not self.position:
                 volatility_signal = current_price > indicators['TARGET']
@@ -57,15 +67,34 @@ class XRPStrategy(BaseStrategy):
                 bb_position = (current_price - indicators['BB_LOWER']) / \
                              (indicators['BB_UPPER'] - indicators['BB_LOWER'])
                 
+                ma_trend = self.check_ma_trend(indicators)
+                
+                # 매수 조건 로깅 (간단히)
+                if volatility_signal and bb_position < self.config.BB_POSITION_BUY:
+                    log.system_log('INFO', f"=== 매수 조건 충족 여부 ===")
+                    log.system_log('INFO', f"현재가/목표가: {current_price:,.0f}/{indicators['TARGET']:,.0f}")
+                    log.system_log('INFO', f"거래량/BB/MA: {volume_surge}/{bb_position < self.config.BB_POSITION_BUY}/{ma_trend}")
+                
                 if (volatility_signal and 
-                    bb_position < 0.3 and 
-                    (volume_surge or self.check_ma_trend(indicators))):
+                    bb_position < self.config.BB_POSITION_BUY and 
+                    (volume_surge or ma_trend)):
                     self.enter_position(current_price)
                     return 'BUY'
             
             # 매도 신호
             else:
                 profit_rate = self.check_position(current_price)
+                bb_position = (current_price - indicators['BB_LOWER']) / \
+                             (indicators['BB_UPPER'] - indicators['BB_LOWER'])
+                
+                # 매도 조건 로깅 (수익이 있을 때만)
+                if profit_rate > 0:
+                    log.system_log('INFO', f"=== 매도 조건 검토 ===")
+                    log.system_log('INFO', f"수익률: {profit_rate:.2f}%")
+                    if bb_position > self.config.BB_POSITION_SELL:
+                        log.system_log('INFO', "BB 상단 도달")
+                    if indicators['VOL_RATIO'] < self.config.MIN_VOLUME_RATIO:
+                        log.system_log('INFO', "거래량 감소")
                 
                 # 익절/손절
                 if profit_rate >= self.config.PROFIT_RATE or profit_rate <= -self.config.LOSS_RATE:
@@ -73,11 +102,8 @@ class XRPStrategy(BaseStrategy):
                     return 'SELL'
                 
                 # 추가 매도 조건
-                bb_position = (current_price - indicators['BB_LOWER']) / \
-                             (indicators['BB_UPPER'] - indicators['BB_LOWER'])
-                
-                if (bb_position > 0.8 or 
-                    (indicators['VOL_RATIO'] < self.config.MIN_VOLUME_RATIO and profit_rate > 0.003)):
+                if (bb_position > self.config.BB_POSITION_SELL or 
+                    (indicators['VOL_RATIO'] < self.config.MIN_VOLUME_RATIO and profit_rate > self.config.MIN_PROFIT_FOR_VOLUME_SELL)):
                     self.exit_position()
                     return 'SELL'
             
@@ -91,6 +117,9 @@ class XRPStrategy(BaseStrategy):
         """이동평균선 정배열 확인"""
         try:
             ma_values = [indicators[f'MA{period}'] for period in sorted(self.config.MA_PERIODS)]
+            # 이동평균선 값 로깅 (간단히)
+            if all(ma_values[i] >= ma_values[i+1] for i in range(len(ma_values)-1)):
+                log.system_log('INFO', "이동평균선 정배열 확인")
             return all(ma_values[i] >= ma_values[i+1] for i in range(len(ma_values)-1))
         except Exception as e:
             log.log('WA', f"이동평균선 정배열 확인 중 오류: {str(e)}")
