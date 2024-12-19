@@ -1,5 +1,6 @@
 from src.strategies.base_strategy import BaseStrategy
 from config.coins.xrp_config import XRPConfig
+from config.config import Config
 from utils.logger import log
 from datetime import datetime
 
@@ -7,6 +8,34 @@ class XRPStrategy(BaseStrategy):
     def __init__(self):
         super().__init__()
         self.config = XRPConfig
+        self.balance = 0  # 보유 현금
+        self.coin_balance = 0  # 보유 코인
+        self.position = False  # 포지션 상태
+        self.position_price = 0  # 진입 가격
+        
+    def get_balance(self):
+        """현재 보유 현금 조회"""
+        return self.balance
+        
+    def get_coin_balance(self):
+        """현재 보유 코인 수량 조회"""
+        return self.coin_balance
+        
+    def enter_position(self, price):
+        """매수 포지션 진입"""
+        self.position = True
+        self.position_price = price
+        
+    def exit_position(self):
+        """매도 포지션 청산"""
+        self.position = False
+        self.position_price = 0
+        
+    def check_position(self, current_price):
+        """포지션 수익률 계산"""
+        if not self.position or self.position_price == 0:
+            return 0
+        return ((current_price - self.position_price) / self.position_price) * 100
     
     def calculate_indicators(self, market):
         """XRP 특화 지표"""
@@ -49,15 +78,6 @@ class XRPStrategy(BaseStrategy):
             indicators = self.calculate_indicators(market)
             if indicators is None:
                 return 'HOLD'
-            
-            # 현재 시간과 거래 간격 로깅
-            log.system_log('INFO', "--------------------------------------------------")
-            log.system_log('INFO', f"                 [실제 거래] XRP 현재 상태")
-            log.system_log('INFO', "--------------------------------------------------")
-            log.system_log('TR', f"시간: {datetime.now()} (거래간격: {Config.TRADE_INTERVAL}초)")
-            log.system_log('TR', f"현재가: {current_price:,.0f}원")
-            log.system_log('TR', f"보유현금: {self.get_balance():,.8f}원")
-            log.system_log('TR', f"보유코인: {self.get_coin_balance():.4f} XRP")
             
             # 매수 신호
             if not self.position:

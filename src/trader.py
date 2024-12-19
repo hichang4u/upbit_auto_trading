@@ -202,7 +202,7 @@ class MultiCoinTrader:
         return False
     
     def start(self):
-        """모든 코인 트레이딩 시작"""
+        """모든 코인 트레이��� 시작"""
         try:
             self.is_running = True
             if not Config.SIMULATION_MODE:
@@ -222,10 +222,12 @@ class MultiCoinTrader:
             while self.is_running:
                 for coin_ticker in self.traders.keys():
                     try:
+                        # 현재 상태 출력 및 거래 실행
                         current_price, cash_balance, coin_balance = self.print_trading_info(coin_ticker)
                         if None in (current_price, cash_balance, coin_balance):
                             continue
-                        
+                            
+                        # 거래 실행 (상태 출력 없이)
                         self.execute_trade(coin_ticker)
                         
                     except Exception as e:
@@ -288,3 +290,19 @@ class MultiCoinTrader:
             
         except Exception as e:
             log.log('WA', f"거래 정보 출력 중 오류: {str(e)}")
+    
+    def check_and_trade(self, market, strategy):
+        """개별 코인 거래 실행"""
+        try:
+            # 매매 신호 확인
+            signal = strategy.get_trading_signal(market)
+            
+            # 매매 실행
+            if signal == 'BUY':
+                self.execute_buy(market, strategy)
+            elif signal == 'SELL':
+                self.execute_sell(market, strategy)
+                
+        except Exception as e:
+            log.log('WA', f"{market} 거래 처리 중 오류: {str(e)}")
+            return None
