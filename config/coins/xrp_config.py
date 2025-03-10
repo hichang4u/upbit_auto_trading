@@ -4,7 +4,7 @@ class XRPConfig:
     MARKET = f'KRW-{COIN_TICKER}'
     
     # 매매 설정
-    TRADE_UNIT = 10000
+    TRADE_UNIT = 10000  # 1만원 단위 매매
     PROFIT_RATE = 0.008      # 0.8% 익절
     LOSS_RATE = 0.006       # 0.6% 손절 (손실 제한을 더 타이트하게)
     

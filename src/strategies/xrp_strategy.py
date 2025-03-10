@@ -37,6 +37,23 @@ class XRPStrategy(BaseStrategy):
             return 0
         return ((current_price - self.position_price) / self.position_price) * 100
     
+    def calculate_rsi(self, df, period=14):
+        """RSI 계산 함수"""
+        try:
+            delta = df['close'].diff()
+            gain = delta.where(delta > 0, 0)
+            loss = -delta.where(delta < 0, 0)
+            
+            avg_gain = gain.rolling(window=period).mean()
+            avg_loss = loss.rolling(window=period).mean()
+            
+            rs = avg_gain / avg_loss
+            rsi = 100 - (100 / (1 + rs))
+            return rsi
+        except Exception as e:
+            log.log('WA', f"RSI 계산 중 오류: {str(e)}")
+            return None
+    
     def calculate_indicators(self, market):
         """XRP 특화 지표"""
         try:
@@ -48,9 +65,10 @@ class XRPStrategy(BaseStrategy):
             df['RANGE'] = df['high'] - df['low']
             df['TARGET'] = df['open'] + df['RANGE'].shift(1) * self.config.VOLATILITY_FACTOR
             
-            # 거래량 분석
+            # 거래량 분석 (5일 이동평균 및 전일 대비 증감)
             df['VOL_MA5'] = df['volume'].rolling(window=5).mean()
             df['VOL_RATIO'] = df['volume'] / df['VOL_MA5']
+            df['VOL_CHANGE'] = df['volume'].pct_change()  # 전일 대비 거래량 변화율
             
             # 이동평균선
             for period in self.config.MA_PERIODS:
@@ -61,6 +79,9 @@ class XRPStrategy(BaseStrategy):
             df['BB_STD'] = df['close'].rolling(window=self.config.BB_PERIOD).std()
             df['BB_UPPER'] = df['BB_MID'] + df['BB_STD'] * self.config.BB_WIDTH
             df['BB_LOWER'] = df['BB_MID'] - df['BB_STD'] * self.config.BB_WIDTH
+            
+            # RSI 지표 계산 추가
+            df['RSI'] = self.calculate_rsi(df)
             
             return df.iloc[-1]
             
@@ -81,49 +102,56 @@ class XRPStrategy(BaseStrategy):
             
             # 매수 신호
             if not self.position:
-                volatility_signal = current_price > indicators['TARGET']
-                volume_surge = indicators['VOL_RATIO'] > self.config.VOLUME_SURGE_THRESHOLD
+                # RSI 조건
+                rsi_buy_condition = indicators['RSI'] <= 25
                 
-                bb_position = (current_price - indicators['BB_LOWER']) / \
-                             (indicators['BB_UPPER'] - indicators['BB_LOWER'])
+                # 볼린저 밴드 하단 조건
+                bb_lower_condition = current_price <= indicators['BB_LOWER']
                 
-                ma_trend = self.check_ma_trend(indicators)
+                # 거래량 증가 조건
+                volume_increase_condition = indicators['VOL_CHANGE'] > 0
                 
-                # 매수 조건 로깅 (간단히)
-                if volatility_signal and bb_position < self.config.BB_POSITION_BUY:
-                    log.system_log('INFO', f"=== 매수 조건 충족 여부 ===")
-                    log.system_log('INFO', f"현재가/목표가: {current_price:,.0f}/{indicators['TARGET']:,.0f}")
-                    log.system_log('INFO', f"거래량/BB/MA: {volume_surge}/{bb_position < self.config.BB_POSITION_BUY}/{ma_trend}")
+                # 매수 조건 로깅
+                log.system_log('INFO', f"=== 매수 조건 검토 ===")
+                log.system_log('INFO', f"RSI: {indicators['RSI']:.2f} (기준: 25 이하) - {rsi_buy_condition}")
+                log.system_log('INFO', f"볼린저 밴드 하단: {indicators['BB_LOWER']:.2f} (현재가: {current_price:.2f}) - {bb_lower_condition}")
+                log.system_log('INFO', f"거래량 증가 여부: {volume_increase_condition} (변화율: {indicators['VOL_CHANGE']*100:.2f}%)")
                 
-                if (volatility_signal and 
-                    bb_position < self.config.BB_POSITION_BUY and 
-                    (volume_surge or ma_trend)):
+                # 모든 조건 충족 시 매수
+                if rsi_buy_condition and bb_lower_condition and volume_increase_condition:
+                    log.system_log('INFO', "✅ 모든 매수 조건 충족!")
                     self.enter_position(current_price)
                     return 'BUY'
             
             # 매도 신호
             else:
                 profit_rate = self.check_position(current_price)
-                bb_position = (current_price - indicators['BB_LOWER']) / \
-                             (indicators['BB_UPPER'] - indicators['BB_LOWER'])
                 
-                # 매도 조건 로깅 (수익이 있을 때만)
-                if profit_rate > 0:
-                    log.system_log('INFO', f"=== 매도 조건 검토 ===")
-                    log.system_log('INFO', f"수익률: {profit_rate:.2f}%")
-                    if bb_position > self.config.BB_POSITION_SELL:
-                        log.system_log('INFO', "BB 상단 도달")
-                    if indicators['VOL_RATIO'] < self.config.MIN_VOLUME_RATIO:
-                        log.system_log('INFO', "거래량 감소")
+                # RSI 조건
+                rsi_sell_condition = indicators['RSI'] >= 75
                 
-                # 익절/손절
+                # 볼린저 밴드 상단 조건
+                bb_upper_condition = current_price >= indicators['BB_UPPER']
+                
+                # 거래량 증가 조건
+                volume_increase_condition = indicators['VOL_CHANGE'] > 0
+                
+                # 매도 조건 로깅
+                log.system_log('INFO', f"=== 매도 조건 검토 ===")
+                log.system_log('INFO', f"수익률: {profit_rate:.2f}%")
+                log.system_log('INFO', f"RSI: {indicators['RSI']:.2f} (기준: 75 이상) - {rsi_sell_condition}")
+                log.system_log('INFO', f"볼린저 밴드 상단: {indicators['BB_UPPER']:.2f} (현재가: {current_price:.2f}) - {bb_upper_condition}")
+                log.system_log('INFO', f"거래량 증가 여부: {volume_increase_condition} (변화율: {indicators['VOL_CHANGE']*100:.2f}%)")
+                
+                # 익절/손절 (기존 조건 유지)
                 if profit_rate >= self.config.PROFIT_RATE or profit_rate <= -self.config.LOSS_RATE:
+                    log.system_log('INFO', f"익절/손절 조건 충족 (수익률: {profit_rate:.2f}%)")
                     self.exit_position()
                     return 'SELL'
                 
-                # 추가 매도 조건
-                if (bb_position > self.config.BB_POSITION_SELL or 
-                    (indicators['VOL_RATIO'] < self.config.MIN_VOLUME_RATIO and profit_rate > self.config.MIN_PROFIT_FOR_VOLUME_SELL)):
+                # 모든 조건 충족 시 매도
+                if rsi_sell_condition and bb_upper_condition and volume_increase_condition:
+                    log.system_log('INFO', "✅ 모든 매도 조건 충족!")
                     self.exit_position()
                     return 'SELL'
             

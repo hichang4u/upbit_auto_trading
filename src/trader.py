@@ -66,6 +66,14 @@ class MultiCoinTrader:
         try:
             trader = self.traders[coin_ticker]
             
+            # 숫자 타입으로 변환
+            try:
+                current_price = float(current_price)
+                coin_balance = float(coin_balance)
+            except (TypeError, ValueError):
+                log.log('WA', f"{coin_ticker} 수익률 계산 중 타입 변환 오류 (현재가: {current_price}, 코인잔고: {coin_balance})")
+                return 0, 0, 0
+            
             if Config.SIMULATION_MODE:
                 avg_price = trader['simulation_entry_price']
             else:
@@ -76,8 +84,12 @@ class MultiCoinTrader:
                     avg_price = avg_buy_price
                 
             # 숫자형으로 변환 (API가 문자열을 반환할 수 있음)
-            if avg_price is not None:
-                avg_price = float(avg_price)
+            try:
+                if avg_price is not None:
+                    avg_price = float(avg_price)
+            except (TypeError, ValueError):
+                log.log('WA', f"{coin_ticker} 평균 매수가 변환 오류: {avg_price}")
+                avg_price = 0
                 
             if avg_price and coin_balance > 0:
                 profit_rate = ((current_price - avg_price) / avg_price) * 100
@@ -93,41 +105,86 @@ class MultiCoinTrader:
         """거래 정보 출력"""
         try:
             trader = self.traders[coin_ticker]
-            current_price = trader['client'].get_current_price(trader['config'].MARKET)
             
-            # 현재가가 None이면 종료
-            if current_price is None:
-                log.log('WA', f"{coin_ticker} 현재가 조회 실패")
+            # 현재가 조회
+            try:
+                current_price = trader['client'].get_current_price(trader['config'].MARKET)
+                
+                # 현재가가 None이면 종료
+                if current_price is None:
+                    log.log('WA', f"{coin_ticker} 현재가 조회 실패")
+                    return None, None, None
+            except Exception as e:
+                log.detailed_error(f"{coin_ticker} 현재가 조회 중 오류", e)
                 return None, None, None
                 
-            if Config.SIMULATION_MODE:
-                balance = trader['simulation_balance']
-                cash_balance = balance['KRW']
-                coin_balance = balance[trader['config'].COIN_TICKER]
-            else:
-                # 현금 잔고와 코인 잔고를 개별적으로 조회
-                cash_balance = trader['client'].get_balance('KRW') or 0
-                coin_balance = trader['client'].get_balance(trader['config'].COIN_TICKER) or 0
+            # 잔고 정보 조회
+            try:
+                if Config.SIMULATION_MODE:
+                    balance = trader['simulation_balance']
+                    cash_balance = balance.get('KRW', 0)
+                    coin_balance = balance.get(trader['config'].COIN_TICKER, 0)
+                else:
+                    # 현금 잔고와 코인 잔고를 개별적으로 조회
+                    try:
+                        cash_balance = trader['client'].get_balance('KRW')
+                        if cash_balance is None:
+                            log.log('WA', f"{coin_ticker} 현금 잔고 조회 실패")
+                            cash_balance = 0
+                    except Exception as e:
+                        log.detailed_error(f"{coin_ticker} 현금 잔고 조회 중 오류", e)
+                        cash_balance = 0
+                    
+                    try:
+                        coin_balance = trader['client'].get_balance(trader['config'].COIN_TICKER)
+                        if coin_balance is None:
+                            log.log('WA', f"{coin_ticker} 코인 잔고 조회 실패")
+                            coin_balance = 0
+                    except Exception as e:
+                        log.detailed_error(f"{coin_ticker} 코인 잔고 조회 중 오류", e)
+                        coin_balance = 0
+                    
+                # 숫자 타입으로 변환
+                try:
+                    cash_balance = float(cash_balance)
+                    coin_balance = float(coin_balance)
+                except (TypeError, ValueError) as e:
+                    log.detailed_error(f"{coin_ticker} 잔고 정보 변환 오류", e)
+                    cash_balance = 0
+                    coin_balance = 0
+            except Exception as e:
+                log.detailed_error(f"{coin_ticker} 잔고 정보 조회 중 오류", e)
+                cash_balance = 0
+                coin_balance = 0
             
-            profit_amount, profit_rate, avg_buy_price = self.get_profit_info(
-                coin_ticker, current_price, coin_balance
-            )
+            # 수익 정보 계산
+            try:
+                profit_amount, profit_rate, avg_buy_price = self.get_profit_info(
+                    coin_ticker, current_price, coin_balance
+                )
+            except Exception as e:
+                log.detailed_error(f"{coin_ticker} 수익 정보 계산 오류", e)
+                profit_amount, profit_rate, avg_buy_price = 0, 0, 0
             
-            mode = "[시뮬레이션]" if Config.SIMULATION_MODE else "[실제 거래]"
-            log.print_section(f"{mode} {coin_ticker} 현재 상태")
-            log.log('TR', f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            log.log('TR', f"현재가: {current_price:,}원")
-            log.log('TR', f"보유현금: {cash_balance:,}원")
-            log.log('TR', f"보유코인: {coin_balance:.4f} {trader['config'].COIN_TICKER}")
-            
-            if coin_balance > 0:
-                log.log('TR', f"평균단가: {avg_buy_price:,}원")
-                log.log('TR', f"평가손익: {int(profit_amount):,}원 ({profit_rate:+.2f}%)")
+            # 정보 출력
+            try:
+                mode = "[시뮬레이션]" if Config.SIMULATION_MODE else "[실제 거래]"
+                log.print_section(f"{mode} {coin_ticker} 현재 상태")
+                log.log('TR', f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                log.log('TR', f"현재가: {current_price:,}원")
+                log.log('TR', f"보유현금: {cash_balance:,}원")
+                log.log('TR', f"보유코인: {coin_balance:.4f} {trader['config'].COIN_TICKER}")
+                
+                if coin_balance > 0 and avg_buy_price > 0:
+                    log.log('TR', f"평균단가: {avg_buy_price:,}원")
+                    log.log('TR', f"평가손익: {int(profit_amount):,}원 ({profit_rate:+.2f}%)")
+            except Exception as e:
+                log.detailed_error(f"{coin_ticker} 거래 정보 출력 중 화면 출력 오류", e)
             
             return current_price, cash_balance, coin_balance
                 
         except Exception as e:
-            log.log('WA', f"{coin_ticker} 정보 출력 중 오류: {str(e)}")
+            log.detailed_error(f"{coin_ticker} 정보 출력 중 오류", e)
             return None, None, None
     
     def simulate_market_buy(self, coin_ticker, amount):
@@ -170,72 +227,197 @@ class MultiCoinTrader:
         """매매 실행"""
         try:
             trader = self.traders[coin_ticker]
-            balance = trader['simulation_balance'] if Config.SIMULATION_MODE else trader['client'].get_balance()
             
             # API 호출 제한 확인
             self.check_api_rate_limit()
             
             # 거래 신호 확인
-            signal = trader['strategy'].get_trading_signal(trader['config'].MARKET)
-            self.record_api_call()
+            try:
+                signal = trader['strategy'].get_trading_signal(trader['config'].MARKET)
+                self.record_api_call()
+            except Exception as e:
+                log.detailed_error(f"{coin_ticker} 거래 신호 확인 중 오류", e)
+                return False
             
             if signal == 'BUY':
-                cash_balance = balance['KRW']
-                trade_amount = min(cash_balance, trader['config'].TRADE_UNIT)
-                
-                if trade_amount >= 5000:  # 최소 주문금액
-                    if Config.SIMULATION_MODE:
-                        return self.simulate_market_buy(coin_ticker, trade_amount)
-                    else:
-                        return trader['client'].buy_market_order(trader['config'].MARKET, trade_amount)
+                # 시뮬레이션 모드
+                if Config.SIMULATION_MODE:
+                    try:
+                        cash_balance = trader['simulation_balance'].get('KRW', 0)
+                        trade_amount = min(cash_balance, trader['config'].TRADE_UNIT)
+                        
+                        if trade_amount >= 5000:  # 최소 주문금액
+                            return self.simulate_market_buy(coin_ticker, trade_amount)
+                    except Exception as e:
+                        log.detailed_error(f"{coin_ticker} 시뮬레이션 매수 처리 중 오류", e)
+                        return False
+                # 실제 거래 모드
+                else:
+                    # 현금 잔고 조회
+                    try:
+                        cash_balance = trader['client'].get_balance('KRW')
+                        if cash_balance is None:
+                            log.log('WA', f"{coin_ticker} 현금 잔고 조회 실패")
+                            return False
+                        
+                        try:
+                            cash_balance = float(cash_balance)
+                        except (TypeError, ValueError) as e:
+                            log.detailed_error(f"{coin_ticker} 현금 잔고 타입 변환 오류: {cash_balance}", e)
+                            return False
+                        
+                        trade_amount = min(cash_balance, trader['config'].TRADE_UNIT)
+                        
+                        if trade_amount >= 5000:  # 최소 주문금액
+                            try:
+                                # 매개변수 순서 주의: 마켓, 금액
+                                log.log('TR', f"{coin_ticker} 매수 시도: {trade_amount:,}원")
+                                result = trader['client'].buy_market_order(
+                                    market=trader['config'].MARKET, 
+                                    price=trade_amount
+                                )
+                                if result:
+                                    log.log('TR', f"{coin_ticker} 매수 주문 성공: {trade_amount:,}원")
+                                else:
+                                    log.log('WA', f"{coin_ticker} 매수 주문 실패: 결과가 None")
+                                return result
+                            except Exception as e:
+                                log.detailed_error(f"{coin_ticker} 매수 주문 중 오류: 금액={trade_amount}", e)
+                                return False
+                        else:
+                            log.log('TR', f"{coin_ticker} 최소 주문금액 미달: {trade_amount:,}원")
+                    except Exception as e:
+                        log.detailed_error(f"{coin_ticker} 매수 처리 중 오류", e)
+                        return False
                         
             elif signal == 'SELL':
-                coin_balance = balance[trader['config'].COIN_TICKER]
-                if coin_balance > 0:
-                    if Config.SIMULATION_MODE:
-                        return self.simulate_market_sell(coin_ticker, coin_balance)
-                    else:
-                        return trader['client'].sell_market_order(trader['config'].MARKET, coin_balance)
+                # 시뮬레이션 모드
+                if Config.SIMULATION_MODE:
+                    try:
+                        coin_balance = trader['simulation_balance'].get(trader['config'].COIN_TICKER, 0)
+                        if coin_balance > 0:
+                            return self.simulate_market_sell(coin_ticker, coin_balance)
+                    except Exception as e:
+                        log.detailed_error(f"{coin_ticker} 시뮬레이션 매도 처리 중 오류", e)
+                        return False
+                # 실제 거래 모드
+                else:
+                    # 코인 잔고 조회
+                    try:
+                        coin_balance = trader['client'].get_balance(trader['config'].COIN_TICKER)
+                        if coin_balance is None:
+                            log.log('WA', f"{coin_ticker} 코인 잔고 조회 실패")
+                            return False
+                        
+                        try:
+                            coin_balance = float(coin_balance)
+                        except (TypeError, ValueError) as e:
+                            log.detailed_error(f"{coin_ticker} 코인 잔고 타입 변환 오류: {coin_balance}", e)
+                            return False
+                        
+                        if coin_balance > 0:
+                            try:
+                                # 매개변수 순서 주의: 마켓, 수량
+                                log.log('TR', f"{coin_ticker} 매도 시도: {coin_balance} {trader['config'].COIN_TICKER}")
+                                result = trader['client'].sell_market_order(
+                                    market=trader['config'].MARKET, 
+                                    volume=coin_balance
+                                )
+                                if result:
+                                    log.log('TR', f"{coin_ticker} 매도 주문 성공: {coin_balance} {trader['config'].COIN_TICKER}")
+                                else:
+                                    log.log('WA', f"{coin_ticker} 매도 주문 실패: 결과가 None")
+                                return result
+                            except Exception as e:
+                                log.detailed_error(f"{coin_ticker} 매도 주문 중 오류: 수량={coin_balance}", e)
+                                return False
+                        else:
+                            log.log('TR', f"{coin_ticker} 매도할 코인이 없습니다")
+                    except Exception as e:
+                        log.detailed_error(f"{coin_ticker} 매도 처리 중 오류", e)
+                        return False
                         
         except Exception as e:
-            log.log('WA', f"{coin_ticker} 매매 실행 중 오류: {str(e)}")
+            log.detailed_error(f"{coin_ticker} 매매 실행 중 오류", e)
         return False
     
     def start(self):
-        """모든 코인 트레이��� 시작"""
+        """모든 코인 트레이더 시작"""
         try:
             self.is_running = True
+            
+            # 기존 미체결 주문 취소
             if not Config.SIMULATION_MODE:
-                for trader in self.traders.values():
-                    trader['client'].cancel_all_orders()
+                try:
+                    for coin_ticker, trader in self.traders.items():
+                        try:
+                            trader['client'].cancel_all_orders()
+                        except Exception as e:
+                            log.detailed_error(f"{coin_ticker} 미체결 주문 취소 실패", e)
+                except Exception as e:
+                    log.detailed_error("미체결 주문 취소 중 오류", e)
             
             mode = "시뮬레이션" if Config.SIMULATION_MODE else "실제 거래"
             log.print_header(f"자동매매 프로그램 시작 ({mode})")
             
+            # 각 코인별 트레이더 정보 출력
             for coin_ticker, trader in self.traders.items():
-                log.log('TR', f"{coin_ticker} 거래 시작")
-                log.log('TR', f"대상: {trader['config'].MARKET}")
-                if Config.SIMULATION_MODE:
-                    log.log('TR', f"초기자금: {trader['simulation_balance']['KRW']:,}원")
-                log.log('TR', f"매매단위: {trader['config'].TRADE_UNIT:,}원")
+                try:
+                    log.log('TR', f"{coin_ticker} 거래 시작")
+                    log.log('TR', f"대상: {trader['config'].MARKET}")
+                    
+                    # 시뮬레이션 모드에서 초기 자금 출력
+                    if Config.SIMULATION_MODE:
+                        try:
+                            krw_balance = trader['simulation_balance'].get('KRW', 0)
+                            log.log('TR', f"초기자금: {krw_balance:,}원")
+                        except Exception as e:
+                            log.detailed_error(f"{coin_ticker} 초기 자금 확인 실패", e)
+                    
+                    # TRADE_UNIT 값 확인 및 출력
+                    try:
+                        trade_unit = getattr(trader['config'], 'TRADE_UNIT', None)
+                        if trade_unit is not None:
+                            trade_unit = float(trade_unit)
+                            log.log('TR', f"매매단위: {trade_unit:,}원")
+                        else:
+                            log.log('WA', f"{coin_ticker} 설정에 매매단위(TRADE_UNIT)가 없습니다")
+                    except (TypeError, ValueError, AttributeError) as e:
+                        log.detailed_error(f"{coin_ticker} 매매단위 확인 실패", e)
+                        
+                except Exception as e:
+                    log.detailed_error(f"{coin_ticker} 정보 출력 중 오류", e)
             
+            # 메인 거래 루프
             while self.is_running:
-                for coin_ticker in self.traders.keys():
+                for coin_ticker in list(self.traders.keys()):
                     try:
                         # 현재 상태 출력 및 거래 실행
-                        current_price, cash_balance, coin_balance = self.print_trading_info(coin_ticker)
-                        if None in (current_price, cash_balance, coin_balance):
+                        try:
+                            current_price, cash_balance, coin_balance = self.print_trading_info(coin_ticker)
+                        except Exception as e:
+                            log.detailed_error(f"{coin_ticker} 거래 정보 출력 중 오류", e)
                             continue
                             
-                        # 거래 실행 (상태 출력 없이)
-                        self.execute_trade(coin_ticker)
+                        if None in (current_price, cash_balance, coin_balance):
+                            log.log('WA', f"{coin_ticker} 거래 정보 누락 (현재가: {current_price}, 현금: {cash_balance}, 코인: {coin_balance})")
+                            continue
+                            
+                        # 거래 실행
+                        try:
+                            self.execute_trade(coin_ticker)
+                        except Exception as e:
+                            log.detailed_error(f"{coin_ticker} 거래 실행 중 오류", e)
                         
                     except Exception as e:
-                        log.log('WA', f"{coin_ticker} 거래 중 오류 발생: {str(e)}")
+                        log.detailed_error(f"{coin_ticker} 거래 중 오류 발생", e)
                 
                 time.sleep(Config.TRADE_INTERVAL)
                     
         except KeyboardInterrupt:
+            self.stop()
+        except Exception as e:
+            log.detailed_error("트레이더 실행 중 예상치 못한 오류", e)
             self.stop()
             
     def stop(self):
